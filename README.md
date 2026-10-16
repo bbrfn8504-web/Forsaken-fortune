@@ -5,7 +5,7 @@ Zero-dependency Node.js (>=18) bot for the Facebook Page **Forsaken Fortune Tell
 - It uses only the text of the message. It never calls the Graph API for profile data, and it takes no payments.
 - If `XAI_API_KEY` is set it uses xAI. Otherwise, if `OPENAI_API_KEY` is set, it uses OpenAI. Either one gets a system prompt. With no key it falls back to a local template generator.
 - A greeting is built from the time of day in Australia/Brisbane, the weekday, the southern-hemisphere season, and the current moon phase. It weaves in any name or star sign the visitor already typed, and asks only for what is still missing. Readings stay free.
-- The greeting includes a button, **Start a video reading 🔮**. Saying "video", "call", or "video call" opens the same free video reading. The bot creates a Jitsi Meet room and sends a **Join the video reading** link. The fortune teller joins there shortly.
+- The greeting includes a button, **Video reading 🔮**. Saying "video", "call", or "video call" opens the same free video reading. The bot creates a Jitsi Meet room and sends a **Join video reading** link. The fortune teller joins there shortly.
 
 ## Config (`.env`)
 | var | purpose |

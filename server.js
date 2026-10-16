@@ -7,8 +7,8 @@ const { PAGE_ACCESS_TOKEN, APP_SECRET, OPENAI_API_KEY, XAI_API_KEY } = process.e
 const PORT = process.env.PORT || 3000;
 const GRAPH = 'https://graph.facebook.com/v21.0/me/messages';
 const VIDEO_PAYLOAD = 'VIDEO_READING';
-const VIDEO_BUTTON_TITLE = 'Start a video reading 🔮';
-const JOIN_BUTTON_TITLE = 'Join the video reading';
+const VIDEO_BUTTON_TITLE = 'Video reading 🔮';
+const JOIN_BUTTON_TITLE = 'Join video reading';
 function verifyToken() { return process.env.VERIFY_TOKEN || ''; }
 
 const SIGNS = ['aries','taurus','gemini','cancer','leo','virgo','libra','scorpio','sagittarius','capricorn','aquarius','pisces'];

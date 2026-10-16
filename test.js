@@ -150,7 +150,9 @@ assert.ok(!/\bquestion\b/i.test(textOf(asked.messages[0])), textOf(asked.message
 assert.strictEqual(asked.messages[0].attachment.payload.template_type, 'button');
 assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].type, 'postback');
 assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].title, VIDEO_BUTTON_TITLE);
-assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
+assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].title, 'Video reading 🔮');
+assert.ok([...VIDEO_BUTTON_TITLE].length <= 20);
+assert.ok([...JOIN_BUTTON_TITLE].length <= 20);
 assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].payload, VIDEO_PAYLOAD);
 
 const reading = replyFor({ name: null, sign: null, question: null }, maya, { date: springMorning });
@@ -179,7 +181,7 @@ assert.strictEqual(blank.kind, 'welcome');
 assert.ok(/\bname\b/i.test(textOf(blank.messages[0])));
 assert.ok(/star sign/i.test(textOf(blank.messages[0])));
 assert.ok(/\bquestion\b/i.test(textOf(blank.messages[0])));
-assert.strictEqual(blank.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
+assert.strictEqual(blank.messages[0].attachment.payload.buttons[0].title, 'Video reading 🔮');
 
 const direct = buildFortune(
   { name: 'Maya', sign: 'leo', question: 'will I find adventure this year?' },
@@ -201,7 +203,7 @@ for (const phrase of ['video', 'call', 'video call', 'VIDEO', 'Can we video call
   const join = started.messages[0].attachment.payload.buttons[0];
   assert.strictEqual(join.type, 'web_url');
   assert.strictEqual(join.title, JOIN_BUTTON_TITLE);
-  assert.strictEqual(join.title, 'Join the video reading');
+  assert.strictEqual(join.title, 'Join video reading');
   assert.match(join.url, /^https:\/\/meet\.jit\.si\/ForsakenFortune-[A-Za-z0-9]{10}$/);
   const spoken = textOf(started.messages[0]);
   assert.match(spoken, /fortune teller will join you there shortly/i);
@@ -230,7 +232,7 @@ const getStarted = replyFor({ name: null, sign: null, question: null }, '', {
   postback: true, postbackPayload: 'GET_STARTED', date: springMorning,
 });
 assert.strictEqual(getStarted.kind, 'welcome');
-assert.strictEqual(getStarted.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
+assert.strictEqual(getStarted.messages[0].attachment.payload.buttons[0].title, 'Video reading 🔮');
 
 resetCalls();
 const urls = [];
