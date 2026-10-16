@@ -3,9 +3,13 @@ const http = require('http'), crypto = require('crypto'), fs = require('fs'), pa
 // load .env
 try { for (const l of fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n')) {
   const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/); if (m && !process.env[m[1]]) process.env[m[1]] = m[2]; } } catch {}
-const { VERIFY_TOKEN, PAGE_ACCESS_TOKEN, APP_SECRET, OPENAI_API_KEY, XAI_API_KEY } = process.env;
+const { PAGE_ACCESS_TOKEN, APP_SECRET, OPENAI_API_KEY, XAI_API_KEY } = process.env;
 const PORT = process.env.PORT || 3000;
 const GRAPH = 'https://graph.facebook.com/v21.0/me/messages';
+const VIDEO_PAYLOAD = 'VIDEO_READING';
+const VIDEO_BUTTON_TITLE = 'Start a video reading 🔮';
+const JOIN_BUTTON_TITLE = 'Join the video reading';
+function verifyToken() { return process.env.VERIFY_TOKEN || ''; }
 
 const SIGNS = ['aries','taurus','gemini','cancer','leo','virgo','libra','scorpio','sagittarius','capricorn','aquarius','pisces'];
 const NOT_NAMES = new Set(`
@@ -18,7 +22,7 @@ const NOT_NAMES = new Set(`
   question find year today now good morning afternoon evening night
   welcome seeker might let have has had not also about into over
   after before again here there and or of to for in on at by with from
-  but if so then
+  but if so then call video
 `.trim().split(/\s+/));
 
 const NEW_MOON_UTC = Date.UTC(2000, 0, 6, 18, 14, 0);
@@ -222,6 +226,7 @@ const FORTUNE_ANSWERS = [
 const SYSTEM = "You are the Forsaken Fortune Teller, a mystical oracle. Reply with a short fortune of 2-4 sentences using ONLY the name, star sign, and question provided, plus the given moon phase and southern-hemisphere season. Use a spiritual tone (energy, universe, inner light, cosmic guidance). Be kind. No medical, legal, or financial advice. Never ask for personal data, a profile, or payment. The reading is free. End with exactly: (For entertainment only.)";
 
 const sessions = new Map();
+const calls = [];
 
 function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -380,10 +385,108 @@ function buildFortune(state, date = new Date()) {
 }
 
 function isGreetingOnly(text, postback) {
-  if (postback) return true;
+  if (postback && !String(text || '').trim()) return true;
   const t = String(text || '').trim();
   if (!t) return true;
   return /^(hi|hello|hey|start|get started|help)\b[!. ]*$/i.test(t);
+}
+
+function wantsVideo(text, options = {}) {
+  if ((options.postbackPayload || '') === VIDEO_PAYLOAD) return true;
+  return /\b(?:video\s*call|video|call)\b/i.test(String(text || ''));
+}
+
+function fitButtonText(text) {
+  const note = '(For entertainment only.)';
+  const raw = String(text || '');
+  if (raw.length <= 640) return raw;
+  const cut = raw.slice(0, 640 - note.length - 1).trim();
+  return `${cut} ${note}`;
+}
+
+function attachVideoButton(text) {
+  return {
+    attachment: {
+      type: 'template',
+      payload: {
+        template_type: 'button',
+        text: fitButtonText(text),
+        buttons: [{ type: 'postback', title: VIDEO_BUTTON_TITLE, payload: VIDEO_PAYLOAD }],
+      },
+    },
+  };
+}
+
+function newRoomUrl() {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.randomBytes(10);
+  let id = '';
+  for (let i = 0; i < 10; i++) id += alphabet[bytes[i] % alphabet.length];
+  return `https://meet.jit.si/ForsakenFortune-${id}`;
+}
+
+function buildVideoMessage(name, roomUrl) {
+  const greet = name
+    ? `${name}, the universe opens a circle of inner light for you.`
+    : 'Seeker, the universe opens a circle of inner light for you.';
+  const text = `${greet} The fortune teller will join you there shortly, with cosmic guidance for your inner light. This reading is free. (For entertainment only.)`;
+  return {
+    attachment: {
+      type: 'template',
+      payload: {
+        template_type: 'button',
+        text: fitButtonText(text),
+        buttons: [{ type: 'web_url', url: roomUrl, title: JOIN_BUTTON_TITLE }],
+      },
+    },
+  };
+}
+
+function createVideoReading(name, date = new Date()) {
+  const when = date instanceof Date ? date : new Date(date);
+  const entry = {
+    timestamp: when.toISOString(),
+    roomUrl: newRoomUrl(),
+    name: name ? String(name) : null,
+  };
+  calls.unshift(entry);
+  if (calls.length > 50) calls.length = 50;
+  return {
+    entry: { timestamp: entry.timestamp, roomUrl: entry.roomUrl, name: entry.name },
+    message: buildVideoMessage(entry.name, entry.roomUrl),
+  };
+}
+
+function listCalls() {
+  return calls.slice(0, 50).map(({ timestamp, roomUrl, name }) => ({ timestamp, roomUrl, name }));
+}
+
+function resetCalls() { calls.length = 0; }
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function renderCallsHtml() {
+  const items = listCalls().map((c) => {
+    const when = escapeHtml(c.timestamp);
+    const who = escapeHtml(c.name || 'Name not given');
+    const url = escapeHtml(c.roomUrl);
+    return `<li><time datetime="${when}">${when}</time> — ${who} — <a href="${url}">${url}</a></li>`;
+  }).join('');
+  const list = items || '<li>No pending video readings.</li>';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Pending video readings</title></head><body><h1>Pending video readings</h1><p>Newest first. Free, for entertainment only.</p><ul>${list}</ul></body></html>`;
+}
+
+function callsAuthorized(key) {
+  const expected = verifyToken();
+  if (!expected || key == null) return false;
+  const given = Buffer.from(String(key));
+  const want = Buffer.from(expected);
+  if (given.length !== want.length) return false;
+  return crypto.timingSafeEqual(given, want);
 }
 
 function replyFor(state, text, options = {}) {
@@ -397,13 +500,17 @@ function replyFor(state, text, options = {}) {
   if (parsed.name) next.name = parsed.name;
   if (parsed.sign) next.sign = parsed.sign;
   if (parsed.question) next.question = parsed.question;
+  if (wantsVideo(text, options)) {
+    const video = createVideoReading(next.name, date);
+    return { state: next, messages: [video.message], kind: 'video', reading: null, call: video.entry };
+  }
   if (!isGreetingOnly(text, options.postback) && next.name && next.sign && next.question) {
     const reading = { name: next.name, sign: next.sign, question: next.question };
     const fortune = buildFortune(reading, date);
     next.question = null;
     return { state: next, messages: [fortune], kind: 'fortune', reading };
   }
-  return { state: next, messages: [buildWelcome(next, date)], kind: 'welcome', reading: null };
+  return { state: next, messages: [attachVideoButton(buildWelcome(next, date))], kind: 'welcome', reading: null };
 }
 
 async function maybeLlm(reading, fallback, date = new Date()) {
@@ -424,12 +531,22 @@ async function maybeLlm(reading, fallback, date = new Date()) {
   } catch (e) { console.error('LLM error', e.message); return fallback; }
 }
 
-async function send(psid, text) {
-  console.log('reply ->', psid, ':', text);
-  if (!PAGE_ACCESS_TOKEN) { console.log('[no PAGE_ACCESS_TOKEN] would send to', psid, ':', text); return; }
+async function send(psid, msg) {
+  const message = typeof msg === 'string' ? { text: msg.slice(0, 2000) } : msg;
+  const shown = typeof msg === 'string' ? msg : JSON.stringify(message);
+  console.log('reply ->', psid, ':', shown);
+  if (!PAGE_ACCESS_TOKEN) { console.log('[no PAGE_ACCESS_TOKEN] would send to', psid, ':', shown); return; }
   const r = await fetch(`${GRAPH}?access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: psid }, messaging_type: 'RESPONSE', message: { text: text.slice(0, 2000) } }) });
-  if (!r.ok) console.error('Send API error', r.status, await r.text());
+    body: JSON.stringify({ recipient: { id: psid }, messaging_type: 'RESPONSE', message }) });
+  if (!r.ok) {
+    const err = await r.text();
+    console.error('Send API error', r.status, err);
+    const payload = msg?.attachment?.payload;
+    if (typeof msg !== 'string' && payload?.text) {
+      const url = payload.buttons?.find((b) => b.url)?.url;
+      await send(psid, url ? `${payload.text} ${url}` : payload.text);
+    }
+  }
 }
 
 async function handle(ev) {
@@ -438,7 +555,7 @@ async function handle(ev) {
   const text = ev.message?.text?.trim() || '';
   const prev = sessions.get(psid) || { name: null, sign: null, question: null };
   const date = new Date();
-  const result = replyFor(prev, text, { date, postback: !!ev.postback });
+  const result = replyFor(prev, text, { date, postback: !!ev.postback, postbackPayload: ev.postback?.payload || '' });
   sessions.set(psid, result.state);
   let msg = result.messages[0];
   if (result.kind === 'fortune') msg = await maybeLlm(result.reading, msg, date);
@@ -455,7 +572,8 @@ function validSig(req, raw) {
 function onRequest(req, res) {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/webhook' && req.method === 'GET') {
-    const ok = u.searchParams.get('hub.mode') === 'subscribe' && VERIFY_TOKEN && u.searchParams.get('hub.verify_token') === VERIFY_TOKEN;
+    const token = verifyToken();
+    const ok = u.searchParams.get('hub.mode') === 'subscribe' && token && u.searchParams.get('hub.verify_token') === token;
     res.writeHead(ok ? 200 : 403, { 'Content-Type': 'text/plain' }); return res.end(ok ? u.searchParams.get('hub.challenge') || '' : 'Forbidden');
   }
   if (u.pathname === '/webhook' && req.method === 'POST') {
@@ -467,7 +585,13 @@ function onRequest(req, res) {
       if (body.object === 'page') for (const e of body.entry || []) for (const ev of e.messaging || []) handle(ev).catch(err => console.error(err));
     }); return;
   }
-  if (u.pathname === '/privacy') { res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); return res.end('<h1>Forsaken Fortune Teller Privacy Policy</h1><p>Our Messenger bot only reads the messages you send to the Forsaken Fortune Teller Page, and uses them solely to write your fortune reply. We do not access your Facebook profile, sell data, or store message content beyond temporary processing. Readings are for entertainment only.</p><p>To request deletion of any data, message the Page with \"delete my data\" or email yghh54447@gmail.com.</p>'); }
+  if (u.pathname === '/calls' && req.method === 'GET') {
+    if (!callsAuthorized(u.searchParams.get('key'))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Forbidden');
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(renderCallsHtml());
+  }
+  if (u.pathname === '/privacy') { res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); return res.end('<h1>Forsaken Fortune Teller Privacy Policy</h1><p>Our Messenger bot only reads the messages you send to the Forsaken Fortune Teller Page, and uses them solely to write your fortune reply. We do not access your Facebook profile, sell data, or store message content beyond temporary processing. Readings are for entertainment only.</p><p>A video reading uses Jitsi Meet, a third-party free service. We create a meet.jit.si room, send you the link, and keep that link with the name you typed, in memory only, so the fortune teller can join. We do not store your Messenger id. Once you open the room, Jitsi handles the call.</p><p>To request deletion of any data, message the Page with \"delete my data\" or email yghh54447@gmail.com.</p>'); }
   if (u.pathname === '/') { res.writeHead(200); return res.end('Forsaken Fortune Teller is listening 🔮'); }
   res.writeHead(404); res.end();
 }
@@ -479,4 +603,6 @@ if (require.main === module) {
 module.exports = {
   parseMessage, replyFor, buildWelcome, buildFortune, moonPhase, brisbaneContext,
   MOON_PHASES, SIGNS, NEW_MOON_UTC, SYNODIC_DAYS,
+  wantsVideo, attachVideoButton, createVideoReading, listCalls, resetCalls, onRequest, handle,
+  VIDEO_BUTTON_TITLE, JOIN_BUTTON_TITLE, VIDEO_PAYLOAD,
 };

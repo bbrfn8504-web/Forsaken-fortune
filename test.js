@@ -3,7 +3,26 @@ const assert = require('assert');
 const {
   parseMessage, replyFor, buildWelcome, buildFortune, moonPhase, brisbaneContext,
   MOON_PHASES, SIGNS, NEW_MOON_UTC, SYNODIC_DAYS,
+  createVideoReading, listCalls, resetCalls, onRequest, handle,
+  VIDEO_BUTTON_TITLE, JOIN_BUTTON_TITLE, VIDEO_PAYLOAD,
 } = require('./server');
+
+function textOf(msg) {
+  if (typeof msg === 'string') return msg;
+  return msg?.attachment?.payload?.text || '';
+}
+
+function invoke(method, url) {
+  let status = 0;
+  let body = '';
+  const req = { method, url, headers: {} };
+  const res = {
+    writeHead(code) { status = code; },
+    end(chunk) { body = chunk == null ? '' : String(chunk); },
+  };
+  onRequest(req, res);
+  return { status, body };
+}
 
 function at(year, month, day, hour, minute = 0) {
   return new Date(Date.UTC(year, month - 1, day, hour - 10, minute, 0));
@@ -125,9 +144,14 @@ assert.strictEqual(asked.kind, 'welcome');
 assert.strictEqual(asked.state.name, null);
 assert.strictEqual(asked.state.sign, null);
 assert.strictEqual(asked.state.question, 'can I get a free reading?');
-assert.ok(/\bname\b/i.test(asked.messages[0]));
-assert.ok(/star sign/i.test(asked.messages[0]));
-assert.ok(!/\bquestion\b/i.test(asked.messages[0]), asked.messages[0]);
+assert.ok(/\bname\b/i.test(textOf(asked.messages[0])));
+assert.ok(/star sign/i.test(textOf(asked.messages[0])));
+assert.ok(!/\bquestion\b/i.test(textOf(asked.messages[0])), textOf(asked.messages[0]));
+assert.strictEqual(asked.messages[0].attachment.payload.template_type, 'button');
+assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].type, 'postback');
+assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].title, VIDEO_BUTTON_TITLE);
+assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
+assert.strictEqual(asked.messages[0].attachment.payload.buttons[0].payload, VIDEO_PAYLOAD);
 
 const reading = replyFor({ name: null, sign: null, question: null }, maya, { date: springMorning });
 assert.strictEqual(reading.kind, 'fortune');
@@ -152,15 +176,113 @@ assert.strictEqual(again.state.name, 'Maya');
 
 const blank = replyFor({ name: null, sign: null, question: null }, 'hello', { date: springMorning });
 assert.strictEqual(blank.kind, 'welcome');
-assert.ok(/\bname\b/i.test(blank.messages[0]));
-assert.ok(/star sign/i.test(blank.messages[0]));
-assert.ok(/\bquestion\b/i.test(blank.messages[0]));
+assert.ok(/\bname\b/i.test(textOf(blank.messages[0])));
+assert.ok(/star sign/i.test(textOf(blank.messages[0])));
+assert.ok(/\bquestion\b/i.test(textOf(blank.messages[0])));
+assert.strictEqual(blank.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
 
 const direct = buildFortune(
   { name: 'Maya', sign: 'leo', question: 'will I find adventure this year?' },
   springMorning,
 );
 assert.ok(direct.includes('(For entertainment only.)'));
+
+resetCalls();
+const savedToken = process.env.VERIFY_TOKEN;
+process.env.VERIFY_TOKEN = 'test-verify-token';
+
+assert.strictEqual(replyFor({ name: null, sign: null, question: null }, hi, { date: springMorning }).kind, 'welcome');
+const stillFortune = replyFor({ name: 'Maya', sign: 'leo', question: null }, 'will I find adventure this year?', { date: springMorning });
+assert.strictEqual(stillFortune.kind, 'fortune');
+
+for (const phrase of ['video', 'call', 'video call', 'VIDEO', 'Can we video call?', 'please call']) {
+  const started = replyFor({ name: 'Maya', sign: 'leo', question: null }, phrase, { date: springMorning });
+  assert.strictEqual(started.kind, 'video', phrase);
+  const join = started.messages[0].attachment.payload.buttons[0];
+  assert.strictEqual(join.type, 'web_url');
+  assert.strictEqual(join.title, JOIN_BUTTON_TITLE);
+  assert.strictEqual(join.title, 'Join the video reading');
+  assert.match(join.url, /^https:\/\/meet\.jit\.si\/ForsakenFortune-[A-Za-z0-9]{10}$/);
+  const spoken = textOf(started.messages[0]);
+  assert.match(spoken, /fortune teller will join you there shortly/i);
+  assert.match(spoken, /free/i);
+  assert.ok(spoken.includes('(For entertainment only.)'));
+  assert.ok(spoken.includes('Maya'));
+  assert.strictEqual(started.call.name, 'Maya');
+  assert.strictEqual(started.call.roomUrl, join.url);
+  assert.deepStrictEqual(Object.keys(started.call).sort(), ['name', 'roomUrl', 'timestamp']);
+  assert.ok(!JSON.stringify(started.call).includes('psid'));
+}
+
+const named = replyFor({ name: null, sign: null, question: null }, "I'm Maya, video", { date: springMorning });
+assert.strictEqual(named.kind, 'video');
+assert.strictEqual(named.call.name, 'Maya');
+
+const fromButton = replyFor({ name: 'Sam', sign: null, question: null }, '', {
+  postback: true, postbackPayload: 'VIDEO_READING', date: springMorning,
+});
+assert.strictEqual(fromButton.kind, 'video');
+assert.strictEqual(fromButton.call.name, 'Sam');
+assert.strictEqual(listCalls()[0].name, 'Sam');
+assert.ok(!JSON.stringify(listCalls()).includes('PSID'));
+
+const getStarted = replyFor({ name: null, sign: null, question: null }, '', {
+  postback: true, postbackPayload: 'GET_STARTED', date: springMorning,
+});
+assert.strictEqual(getStarted.kind, 'welcome');
+assert.strictEqual(getStarted.messages[0].attachment.payload.buttons[0].title, 'Start a video reading 🔮');
+
+resetCalls();
+const urls = [];
+for (let i = 0; i < 55; i++) {
+  const made = createVideoReading(i === 54 ? 'Newest' : (i === 10 ? '<script>' : null), new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
+  urls.push(made.entry.roomUrl);
+}
+const listed = listCalls();
+assert.strictEqual(listed.length, 50);
+assert.strictEqual(listed[0].roomUrl, urls[54]);
+assert.strictEqual(listed[0].name, 'Newest');
+assert.strictEqual(listed[49].roomUrl, urls[5]);
+assert.ok(!listed.some((c) => c.roomUrl === urls[0]));
+assert.ok(listed[0].timestamp > listed[1].timestamp);
+assert.strictEqual(new Set(urls).size, 55);
+
+const page = invoke('GET', '/calls?key=test-verify-token');
+assert.strictEqual(page.status, 200);
+assert.ok(page.body.includes('Newest'));
+assert.ok(page.body.indexOf(urls[54]) < page.body.indexOf(urls[53]));
+assert.ok(!page.body.includes(urls[0]));
+assert.ok(page.body.includes('&lt;script&gt;'));
+assert.ok(!page.body.includes('<script>'));
+assert.ok(!page.body.includes('PSID123456SECRET'));
+assert.strictEqual(invoke('GET', '/calls').status, 403);
+assert.strictEqual(invoke('GET', '/calls?key=nope').status, 403);
+assert.strictEqual(invoke('GET', '/calls?key=test-verify-toke').status, 403);
+assert.strictEqual(invoke('GET', '/calls?key=').status, 403);
+delete process.env.VERIFY_TOKEN;
+assert.strictEqual(invoke('GET', '/calls?key=test-verify-token').status, 403);
+process.env.VERIFY_TOKEN = 'test-verify-token';
+
+const privacy = invoke('GET', '/privacy');
+assert.strictEqual(privacy.status, 200);
+assert.ok(privacy.body.includes('Jitsi Meet'));
+assert.ok(/third-party free service/i.test(privacy.body));
+assert.ok(privacy.body.includes('yghh54447@gmail.com'));
+
+if (!process.env.PAGE_ACCESS_TOKEN) {
+  resetCalls();
+  handle({ sender: { id: 'PSID123456SECRET' }, message: { text: "I'm Maya, video call" } });
+  const hidden = invoke('GET', '/calls?key=test-verify-token');
+  assert.strictEqual(hidden.status, 200);
+  assert.ok(hidden.body.includes('Maya'));
+  assert.ok(!hidden.body.includes('PSID123456SECRET'));
+  assert.ok(!JSON.stringify(listCalls()).includes('PSID123456SECRET'));
+  assert.deepStrictEqual(Object.keys(listCalls()[0]).sort(), ['name', 'roomUrl', 'timestamp']);
+}
+
+if (savedToken == null) delete process.env.VERIFY_TOKEN;
+else process.env.VERIFY_TOKEN = savedToken;
+resetCalls();
 
 const samples = [
   { state: { name: 'Maya', sign: 'leo', question: null }, date: at(2026, 10, 16, 9) },
