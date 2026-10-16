@@ -4,7 +4,7 @@ Zero-dependency Node.js (>=18) bot for the Facebook Page **Forsaken Fortune Tell
 
 - It uses only the text of the message. It never calls the Graph API for profile data, and it takes no payments.
 - If `XAI_API_KEY` is set it uses xAI. Otherwise, if `OPENAI_API_KEY` is set, it uses OpenAI. Either one gets a system prompt. With no key it falls back to a local template generator.
-- A user's first message (or "hi", "help", or a postback) gets a greeting that explains how to ask for a reading.
+- A greeting is built from the time of day in Australia/Brisbane, the weekday, the southern-hemisphere season, and the current moon phase. It weaves in any name or star sign the visitor already typed, and asks only for what is still missing. Readings stay free.
 
 ## Config (`.env`)
 | var | purpose |
@@ -25,5 +25,5 @@ Zero-dependency Node.js (>=18) bot for the Facebook Page **Forsaken Fortune Tell
 
 ## Limitations
 - A quick tunnel's URL changes every time it restarts, so you have to update the callback in Meta each time. For a stable URL, use a named Cloudflare tunnel or a real host.
-- Which users have already been greeted is kept in memory only, so it resets on restart.
-- Each event is handled on its own. There's no conversation memory.
+- The name, star sign, and current question are kept in memory only, so they reset on restart. After a fortune, the question is cleared so the visitor can ask another.
+- Nothing is read from the Graph API beyond sending the reply. Profile fields are never requested.
